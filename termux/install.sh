@@ -26,25 +26,41 @@ pkg_try() {
   local p
   for p in "$@"; do
     if dpkg -s "$p" >/dev/null 2>&1; then continue; fi
-    if pkg install -y "$p" >/dev/null 2>&1; then echo "  + $p"; else warn "pkg '$p' not available — skipped"; fi
+    # retry once: Android sometimes kills a long download ("Terminated")
+    if pkg install -y "$p" >/dev/null 2>&1 || { sleep 2; pkg install -y "$p" >/dev/null 2>&1; }; then
+      echo "  + $p"
+    else
+      warn "pkg '$p' not available — skipped"
+    fi
   done
+}
+
+# If the selected mirror is broken, switch to Termux's main CDN automatically.
+fix_mirror() {
+  local sl="$PREFIX/etc/apt/sources.list"
+  warn "Mirror problem — switching to packages-cf.termux.dev (backup: $sl.bak)"
+  [ -f "$sl" ] && cp -f "$sl" "$sl.bak"
+  echo "deb https://packages-cf.termux.dev/apt/termux-main stable main" > "$sl"
+  rm -f "$PREFIX/etc/termux/chosen_mirrors" 2>/dev/null || true
+  yes | pkg update -y >/dev/null 2>&1
 }
 
 say "Updating Termux packages"
 if ! yes | pkg update -y >/dev/null 2>&1; then
-  warn "pkg update had errors. Mirror kharab ho sakta hai: 'termux-change-repo' chala ke dusra mirror chuno, phir script dobara chalao."
+  fix_mirror || warn "pkg update still failing — continuing (agar aage error aaye: termux-change-repo)"
 fi
+yes | pkg upgrade -y -o Dpkg::Options::=--force-confnew >/dev/null 2>&1 || true
 
 say "Base tools (python, ffmpeg, git, compilers, audio libs)"
 pkg_try python git ffmpeg clang binutils make cmake pkg-config \
         libsndfile portaudio libffi openssl libxml2 libxslt zlib \
-        libjpeg-turbo libpng whisper-cpp termux-api
+        libjpeg-turbo libpng termux-api
 
 # Rust is big (~300 MB) and is needed to compile pydantic-core (no Android
 # wheel exists). Install it on its own, with output, and retry once.
 say "Rust compiler (needed for pydantic-core)"
 if ! command -v rustc >/dev/null 2>&1; then
-  pkg install -y rust || { warn "rust install failed, retrying once"; sleep 3; pkg install -y rust; } \
+  pkg install -y rust || { warn "rust install failed, fixing mirror and retrying"; fix_mirror || true; pkg install -y rust; } \
     || die "Rust install nahi hua. 'termux-change-repo' se mirror badlo, phir: pkg install rust  — aur script dobara chalao."
 fi
 echo "  + $(rustc --version 2>/dev/null)"
@@ -55,8 +71,9 @@ yes | pkg update -y >/dev/null 2>&1 || true
 
 say "Prebuilt Python packages (avoids hours of compiling)"
 pkg_try python-numpy python-scipy python-pillow python-cryptography \
-        python-psutil python-pydantic-core python-pydantic \
-        python-torch python-torchaudio python-onnxruntime python-yaml
+        python-psutil \
+        python-torch python-torchaudio python-onnxruntime
+# pydantic / pydantic-core / pyyaml have no Termux package: pip builds them below.
 pkg_try python-torchvision   # optional
 
 PY=python
@@ -99,6 +116,22 @@ pip install --prefer-binary -r termux/requirements-termux.txt
 pip install --prefer-binary --no-deps "huggingface_hub>=1.7"
 # The repo's own `omnivoice` package is put on sys.path by the backend itself
 # (core/omnivoice_path.py), so no `pip install -e .` (it would pull GPU deps).
+
+say "Speech-to-text (optional): whisper.cpp"
+if ! command -v whisper-cli >/dev/null 2>&1 && [ "${VS_SKIP_WHISPER:-0}" != 1 ]; then
+  if pkg install -y whisper-cpp >/dev/null 2>&1; then echo "  + whisper-cpp (pkg)"; else
+    echo "  building whisper.cpp from source (~5 min)…"
+    WDIR="$HOME/.cache/whisper.cpp"
+    if { [ -d "$WDIR/.git" ] || git clone -q --depth 1 https://github.com/ggml-org/whisper.cpp "$WDIR"; } \
+       && cmake -S "$WDIR" -B "$WDIR/build" -DCMAKE_BUILD_TYPE=Release -DWHISPER_BUILD_TESTS=OFF -DGGML_OPENMP=OFF >/dev/null \
+       && cmake --build "$WDIR/build" -j2 --target whisper-cli >/dev/null \
+       && install -m755 "$WDIR/build/bin/whisper-cli" "$PREFIX/bin/whisper-cli"; then
+      echo "  + whisper-cli (built)"
+    else
+      warn "whisper.cpp build failed — speech-to-text off, baaki sab chalega."
+    fi
+  fi
+fi
 
 say "Light TTS engine (Supertonic 3, ONNX, CPU)"
 if python -c 'import onnxruntime' 2>/dev/null; then
