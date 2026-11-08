@@ -59,7 +59,7 @@ pkg_try python git ffmpeg clang binutils make cmake pkg-config \
 # Rust is big (~300 MB) and is needed to compile pydantic-core (no Android
 # wheel exists). Install it on its own, with output, and retry once.
 say "Rust compiler (needed for pydantic-core)"
-if ! command -v rustc >/dev/null 2>&1; then
+if ! command -v cargo >/dev/null 2>&1; then
   pkg install -y rust || { warn "rust install failed, fixing mirror and retrying"; fix_mirror || true; pkg install -y rust; } \
     || die "Rust install nahi hua. 'termux-change-repo' se mirror badlo, phir: pkg install rust  — aur script dobara chalao."
 fi
@@ -107,11 +107,37 @@ say "Python venv (re-uses Termux's torch/numpy via --system-site-packages)"
 . .venv-termux/bin/activate
 pip install -q --upgrade pip wheel
 
-say "Python requirements (trimmed for phones)"
+say "pydantic-core (Rust build with Termux's maturin — no Android wheel on PyPI)"
 if ! python -c 'import pydantic_core' 2>/dev/null; then
-  warn "pydantic-core will be compiled with Rust: 10-25 min lagenge. Phone charge pe rakho, Termux band mat karo."
+  for p in rust maturin; do
+    command -v "$( [ "$p" = rust ] && echo cargo || echo maturin )" >/dev/null 2>&1 \
+      || pkg install -y "$p" || { fix_mirror || true; pkg install -y "$p"; } \
+      || die "pkg install $p failed. Run: termux-change-repo && pkg install $p  — then re-run."
+  done
+  warn "Compiling pydantic-core: 10-25 min. Phone charge pe rakho, Termux band mat karo."
   command -v termux-wake-lock >/dev/null 2>&1 && termux-wake-lock || true
+  TMPB="$(mktemp -d "$PREFIX/tmp/pdc.XXXX")"
+  # Which pydantic-core does the latest pydantic (same pin as requirements) need?
+  pip download -q --no-deps --only-binary :all: -d "$TMPB" "pydantic>=2"
+  PDC_VER="$(python - "$TMPB" <<'PYEOF'
+import glob, re, sys, zipfile
+w = glob.glob(sys.argv[1] + "/pydantic-*.whl")[0]
+z = zipfile.ZipFile(w)
+m = z.read([n for n in z.namelist() if n.endswith(".dist-info/METADATA")][0]).decode()
+print(re.search(r"^Requires-Dist: pydantic-core==([0-9.]+)", m, re.M).group(1))
+PYEOF
+)"
+  [ -n "$PDC_VER" ] || die "Could not read pydantic-core version"
+  echo "  pydantic-core $PDC_VER"
+  curl -fsSL "https://files.pythonhosted.org/packages/source/p/pydantic_core/pydantic_core-$PDC_VER.tar.gz" -o "$TMPB/pydantic_core-$PDC_VER.tar.gz"
+  tar xzf "$TMPB"/pydantic_core-*.tar.gz -C "$TMPB"
+  ( cd "$TMPB"/pydantic_core-*/ && unset CARGO_BUILD_TARGET && maturin build --release -i "$(command -v python)" -j "${CARGO_BUILD_JOBS:-2}" )
+  pip install "$TMPB"/pydantic_core-*/target/wheels/pydantic_core-*.whl
+  rm -rf "$TMPB"
+  python -c 'import pydantic_core; print("  + pydantic-core", pydantic_core.__version__)'
 fi
+
+say "Python requirements (trimmed for phones)"
 pip install --prefer-binary -r termux/requirements-termux.txt
 pip install --prefer-binary --no-deps "huggingface_hub>=1.7"
 # The repo's own `omnivoice` package is put on sys.path by the backend itself
