@@ -31,12 +31,23 @@ pkg_try() {
 }
 
 say "Updating Termux packages"
-yes | pkg update -y >/dev/null 2>&1 || warn "pkg update had errors (continuing)"
+if ! yes | pkg update -y >/dev/null 2>&1; then
+  warn "pkg update had errors. Mirror kharab ho sakta hai: 'termux-change-repo' chala ke dusra mirror chuno, phir script dobara chalao."
+fi
 
 say "Base tools (python, ffmpeg, git, compilers, audio libs)"
-pkg_try python git ffmpeg clang binutils make cmake pkg-config rust \
+pkg_try python git ffmpeg clang binutils make cmake pkg-config \
         libsndfile portaudio libffi openssl libxml2 libxslt zlib \
         libjpeg-turbo libpng whisper-cpp termux-api
+
+# Rust is big (~300 MB) and is needed to compile pydantic-core (no Android
+# wheel exists). Install it on its own, with output, and retry once.
+say "Rust compiler (needed for pydantic-core)"
+if ! command -v rustc >/dev/null 2>&1; then
+  pkg install -y rust || { warn "rust install failed, retrying once"; sleep 3; pkg install -y rust; } \
+    || die "Rust install nahi hua. 'termux-change-repo' se mirror badlo, phir: pkg install rust  — aur script dobara chalao."
+fi
+echo "  + $(rustc --version 2>/dev/null)"
 
 say "Enabling tur-repo (prebuilt torch / scipy for Termux)"
 pkg_try tur-repo
@@ -59,6 +70,9 @@ export LDFLAGS="${LDFLAGS:-} -lm"
 ANDROID_API_LEVEL="$(getprop ro.build.version.sdk 2>/dev/null || echo 24)"
 export ANDROID_API_LEVEL
 export CARGO_BUILD_TARGET=aarch64-linux-android
+# Fewer parallel jobs = less RAM; Android kills big compiles otherwise.
+export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-2}"
+export MAKEFLAGS="-j2"
 
 say "Getting VoiceStudio ($BRANCH) into $APP_DIR"
 if [ -d "$APP_DIR/.git" ]; then
@@ -77,6 +91,10 @@ say "Python venv (re-uses Termux's torch/numpy via --system-site-packages)"
 pip install -q --upgrade pip wheel
 
 say "Python requirements (trimmed for phones)"
+if ! python -c 'import pydantic_core' 2>/dev/null; then
+  warn "pydantic-core will be compiled with Rust: 10-25 min lagenge. Phone charge pe rakho, Termux band mat karo."
+  command -v termux-wake-lock >/dev/null 2>&1 && termux-wake-lock || true
+fi
 pip install --prefer-binary -r termux/requirements-termux.txt
 pip install --prefer-binary --no-deps "huggingface_hub>=1.7"
 # The repo's own `omnivoice` package is put on sys.path by the backend itself
