@@ -1,0 +1,52 @@
+# VoiceStudio — trimmed Python deps for Termux (Android aarch64, CPU only).
+#
+# NOT listed here on purpose (installed from Termux/TUR packages by install.sh,
+# because pip would try to compile them for an hour or fail on Android/bionic):
+#   torch, torchaudio, numpy, scipy, pillow, cryptography, psutil, pydantic-core,
+#   onnxruntime
+#
+# DROPPED (GPU-only, desktop-only, or no Android build):
+#   torchvision*, whisperx, faster-whisper / ctranslate2, pyannote-audio, demucs,
+#   pedalboard, audioseal, lightning, pytorch-lightning, nvidia-ml-py, mlx-*,
+#   gradio, tensorboardX, webdataset, argostranslate, litellm, transformers,
+#   accelerate, hf-xet, sherpa-onnx (glibc wheels only), electron/bun frontend.
+#   (*torchvision is tried from TUR by install.sh but is optional.)
+
+# --- web server / API core (imported at startup) ---
+fastapi<0.137
+starlette
+uvicorn
+pydantic>=2
+python-multipart>=0.0.31
+websockets
+httpx>=0.28.1
+socksio>=1.0
+sqlalchemy
+alembic>=1.16
+scalar-fastapi
+python-dotenv
+truststore>=0.9
+
+# --- audio helpers ---
+soundfile
+pydub
+imageio-ffmpeg>=0.6.0
+
+# --- misc runtime ---
+num2words>=0.5.14
+pypdf
+yt-dlp
+posthog>=3.7
+setuptools>=75,<80
+# mcp (MCP server feature) dropped: pulls jsonschema -> rpds-py (Rust build). Add it back if you need MCP.
+
+# huggingface_hub is installed separately with --no-deps (skips the hf-xet
+# Rust build); these are its runtime deps.
+filelock
+fsspec
+packaging
+pyyaml
+tqdm
+typing-extensions
+shellingham
+typer-slim

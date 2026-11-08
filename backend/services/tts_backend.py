@@ -4558,7 +4558,14 @@ def active_backend_id() -> str:
     # Env var > persisted UI choice > default. Env wins so power-users can
     # pin a backend without the Settings picker silently undoing it.
     from core import prefs
-    return prefs.resolve("tts_backend", env="OMNIVOICE_TTS_BACKEND", default="omnivoice")
+    default = "omnivoice"
+    try:
+        from core.termux import default_tts_backend
+
+        default = default_tts_backend() or default  # light ONNX engine on phones
+    except Exception:  # noqa: BLE001
+        pass
+    return prefs.resolve("tts_backend", env="OMNIVOICE_TTS_BACKEND", default=default)
 
 
 # Cached active backend instance + its id (MM2-01). Without this, every call

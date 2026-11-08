@@ -679,6 +679,13 @@ def requested_device_override() -> str:
     resolution order as engine selection, #981). Unknown values normalize to
     ``"auto"`` — the probe must never raise."""
     try:
+        from core.termux import is_termux
+
+        if is_termux():
+            return "cpu"  # Android/Termux: no usable GPU backend for torch
+    except Exception:  # noqa: BLE001 - the probe must never raise
+        pass
+    try:
         from core import prefs
 
         raw = prefs.resolve("compute_device", env="OMNIVOICE_DEVICE", default="auto")
